@@ -11,23 +11,28 @@
 */
 
 // include the library code:
+#include "DHT.h"
 #include <LiquidCrystal.h>
 #include <EEPROM.h>
 #include <RTClib.h>
 #include <Wire.h>
 #include "IRremote.h"
 
+#define DHTPIN 16 // Digital pin connected to the DHT sensor
+#define DHTTYPE DHT11   // DHT 11
+
 // initialize the library with the numbers of the interface pins from the above pin mappings
-LiquidCrystal lcd(8, 9, 10, 11, 12, 13); //
+LiquidCrystal lcd1(2, 3, 5, 6, 7, 8); //
+LiquidCrystal lcd2(2, 14, 5, 6, 7, 8);
 // https://www.carnetdumaker.net/articles/faire-une-barre-de-progression-avec-arduino-et-liquidcrystal/
 // Constants for the size of the LCD screen
 const int LCD_NB_ROWS = 2 ;
 const int LCD_NB_COLUMNS = 16 ;
 const int TDELAY = 25 * 60;
 const int receiver = 15;
-const int buzzer = 3;
+const int buzzer = 9;
 
-
+DHT dht(DHTPIN, DHTTYPE);
 RTC_DS1307 RTC;
 IRrecv irrecv(receiver);           // create instance of 'irrecv'
 decode_results results;
@@ -37,6 +42,9 @@ int setRTC = 0;
 bool running = false;
 int bhour = -1;
 int bminute = -1;
+float h = 0.0;
+float t = 99.0;
+bool checkdht = true;
 
 //  Custom characters
 byte DIV_0_OF_5 [ 8 ] = {
@@ -122,13 +130,13 @@ byte mySmiley[8] = {
 void setup_progressbar () {
 
   //     Save custom characters in the LCD screen memory
-  lcd.createChar ( 0 , DIV_0_OF_5);
-  lcd.createChar ( 1 , DIV_1_OF_5);
-  lcd.createChar ( 2 , DIV_2_OF_5);
-  lcd.createChar ( 3 , DIV_3_OF_5);
-  lcd.createChar ( 4 , DIV_4_OF_5);
-  lcd.createChar ( 5 , DIV_5_OF_5);
-  lcd.createChar ( 6 , mySmiley);
+  lcd1.createChar ( 0 , DIV_0_OF_5);
+  lcd1.createChar ( 1 , DIV_1_OF_5);
+  lcd1.createChar ( 2 , DIV_2_OF_5);
+  lcd1.createChar ( 3 , DIV_3_OF_5);
+  lcd1.createChar ( 4 , DIV_4_OF_5);
+  lcd1.createChar ( 5 , DIV_5_OF_5);
+  lcd1.createChar ( 6 , mySmiley);
 }
 
 //Function drawing the progress bar.
@@ -138,16 +146,17 @@ void setup_progressbar () {
 void draw_progressbar () {
 
   //     Display the new numeric value on the first line
-  lcd.setCursor ( 0 , 0 );
+  lcd1.setCursor ( 0 , 0 );
   lcdOutput(now);
   regularAlert(now);
+  getDHT(now);
   // NB The two spaces at the end of the line allow to clear the figures of the percentage
   // previous when you change from a two or three digit value to a two or one digit value.
 
   byte nb_columns;
-  lcd.setCursor(15,0);
+  lcd1.setCursor(15, 0);
   if (running) {
-    lcd.write(6);
+    lcd1.write(6);
     int left = then - now.unixtime();
     if (left < 0) {
       left = 0;
@@ -158,33 +167,33 @@ void draw_progressbar () {
     }
     nb_columns = map (left, 0 , TDELAY , 0 , LCD_NB_COLUMNS * 5 );
   } else {
-    lcd.print(" ");
+    lcd1.print(" ");
     // Map the range (0 ~ 100) to the range (0 ~ LCD_NB_COLUMNS * 5)
     nb_columns = map (now.second(), 0 , 59 , 0 , LCD_NB_COLUMNS * 5 );
   }
 
   // Move the cursor to the second line
-  lcd.setCursor ( 0 , 1 );
+  lcd1.setCursor ( 0 , 1 );
   // Draw each character of the line
   for (byte i = 0 ; i < LCD_NB_COLUMNS; ++ i) {
 
     // Depending on the number of columns remaining to display
     if (nb_columns == 0 ) { // empty box
-      lcd.write ((byte) 0 );
+      lcd1.write ((byte) 0 );
 
     } else if (nb_columns >= 5 ) { // Full case
-      lcd.write ( 5 );
+      lcd1.write ( 5 );
       nb_columns -= 5 ;
 
     } else { // Last box not empty
-      lcd.write (nb_columns);
+      lcd1.write (nb_columns);
       nb_columns = 0 ;
     }
   }
 }
 
 void buttonClick() {
-    tone(buzzer,15000, 50);  
+  tone(buzzer, 15000, 50);
 }
 
 void longbeep() {
@@ -192,15 +201,48 @@ void longbeep() {
 }
 
 void regularAlert(DateTime now) {
-  if(now.hour()!= bhour) {
+  if (now.hour() != bhour) {
     bhour = now.hour();
     bminute = 30;
     tone(buzzer, 14750, 250);
     return;
   }
-  if(now.minute() == bminute){
+  if (now.minute() == bminute) {
     bminute = 0;
     tone(buzzer, 14750, 100);
+  }
+}
+
+void getDHT(DateTime now) {
+  // every 5 seconds
+  if (now.second() % 5 == 0) {
+    if (checkdht) {
+      checkdht = false;
+      // Reading temperature or humidity takes about 250 milliseconds!
+      h = dht.readHumidity();
+      // Read temperature as Celsius (the default)
+      t = dht.readTemperature();
+
+      // Check if any reads failed and exit early (to try again).
+      if (isnan(h) || isnan(t)) {
+        Serial.println(F("Failed to read from DHT sensor!"));
+        return;
+      }
+
+      // Compute heat index in Fahrenheit (the default)
+      float hic = dht.computeHeatIndex(t, h, false);
+      lcd2.setCursor(0, 0);
+      lcd2.print("RH:");
+      lcd2.print((int)h);
+      lcd2.print("% T:");
+      lcd2.print((int)t);
+      lcd2.print("/");
+      lcd2.print((int)hic);
+      lcd2.print("\337C");
+      return;
+    }
+  } else {
+    checkdht = true;
   }
 }
 
@@ -209,9 +251,11 @@ void setup() {
   // Initialize the LCD screen
   Serial.begin(9600);
   irrecv.enableIRIn(); // Start the receiver
-  lcd.begin (LCD_NB_COLUMNS, LCD_NB_ROWS);
+  lcd1.begin (LCD_NB_COLUMNS, LCD_NB_ROWS);
+  lcd2.begin (LCD_NB_COLUMNS, LCD_NB_ROWS);
   setup_progressbar ();
-  lcd.clear ();
+  lcd1.clear ();
+  lcd2.clear();
   Wire.begin();
   RTC.begin();
   if (! RTC.isrunning() || setRTC == 1) {
@@ -220,6 +264,7 @@ void setup() {
     RTC.adjust(DateTime(__DATE__, __TIME__));
   }
   pinMode (buzzer, OUTPUT);
+  dht.begin();
 }
 
 void loop() {
@@ -241,22 +286,22 @@ void printDigits(int digits)  //this void function is really useful; it adds a "
 {
   if (digits < 10)
   {
-    lcd.print("0");
-    lcd.print(digits);
+    lcd1.print("0");
+    lcd1.print(digits);
   }
   else
   {
-    lcd.print(digits);
+    lcd1.print(digits);
   }
 }
 
 void lcdOutput(DateTime now)  //this is just used to display the timer on the LCD
 {
-  lcd.setCursor(0, 0);
+  lcd1.setCursor(0, 0);
   printDigits(now.hour());
-  lcd.print(":");
+  lcd1.print(":");
   printDigits(now.minute());
-  lcd.print(":");
+  lcd1.print(":");
   printDigits(now.second());
   delay(100);
 }
