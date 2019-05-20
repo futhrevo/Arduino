@@ -558,8 +558,8 @@ void getPhase() {  // calculate the current phase of the moon
   It's 14:24 6 January 2000 and I suspect this is a day of a new moon cycle on the moment of algorithm development.
 */
   IP = normalize((JD - 2451550.1) / 29.530588853);
-  AG = (IP*29.53) + 0.23;
-  byte i = round(AG);
+  AG = (IP*29.53) + 0.23; // GMT offset +5:30 amounts to 0.23 day
+  byte i = ceil(AG);
   lcd2.setCursor(12, 0);
   if(i < 16) {  // waxing cycle
     lcd2.print("\76");
