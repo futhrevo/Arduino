@@ -34,7 +34,7 @@ unsigned int localPort = 8888;       // local port to listen for UDP packets
 
 const char timeServer[] = "in.pool.ntp.org"; // time.nist.gov NTP server
 
-const int NTP_PACKET_SIZE = 48; // NTP time stamp is in the first 48 bytes of the message
+const byte NTP_PACKET_SIZE = 48; // NTP time stamp is in the first 48 bytes of the message
 
 byte packetBuffer[NTP_PACKET_SIZE]; //buffer to hold incoming and outgoing packets
 
@@ -42,19 +42,21 @@ byte packetBuffer[NTP_PACKET_SIZE]; //buffer to hold incoming and outgoing packe
 EthernetUDP Udp;
 
 // pushing box
-char server[] = "api.pushingbox.com"; //YOUR SERVER
-EthernetClient client; 
+const char server[] = "api.pushingbox.com"; //YOUR SERVER
+EthernetClient client;
 
 // initialize the library with the numbers of the interface pins from the above pin mappings
 LiquidCrystal lcd1(2, 14, 5, 6, 7, 8); //
 LiquidCrystal lcd2(2, 3, 5, 6, 7, 8);
 // https://www.carnetdumaker.net/articles/faire-une-barre-de-progression-avec-arduino-et-liquidcrystal/
 // Constants for the size of the LCD screen
-const int LCD_NB_ROWS = 2 ;
-const int LCD_NB_COLUMNS = 16 ;
+const byte LCD_NB_ROWS = 2 ;
+const byte LCD_NB_COLUMNS = 16 ;
 const int TDELAY = 25 * 60;
-const int receiver = 15;
-const int buzzer = 9;
+const byte receiver = 15;
+const byte buzzer = 9;
+const char daysOfTheWeek[7][4] = {"SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"};
+const char tithi[16][4] = {"AMS", "PAD", "DWI", "TRI", "CHA", "PAN", "SHA", "SAP", "AST", "NAV", "DAS", "EKA", "DVA", "THR", "CTD", "PUN"};
 
 DHT dht(DHTPIN, DHTTYPE);
 RTC_DS1307 RTC;
@@ -62,7 +64,6 @@ IRrecv irrecv(receiver);           // create instance of 'irrecv'
 decode_results results;
 DateTime now;
 long then;
-int setRTC = 0;
 bool running = false;
 int bhour = -1;
 int bminute = -1;
@@ -253,13 +254,13 @@ void getDHT(DateTime now) {
 
       // Check if any reads failed and exit early (to try again).
       if (isnan(h) || isnan(t)) {
-        Serial.println(F("Failed to read from DHT sensor!"));
+        Serial.println(F("DHT FAIL"));
         return;
       }
 
       // Compute heat index in Fahrenheit (the default)
       float hic = dht.computeHeatIndex(t, h, false);
-      lcd2.setCursor(0, 0);
+      lcd2.setCursor(0, 1);
       lcd2.print("RH:");
       lcd2.print((int)h);
       lcd2.print("% T:");
@@ -297,12 +298,12 @@ void setup() {
 
   // start Ethernet and UDP
   if (Ethernet.begin(mac) == 0) {
-    Serial.println("Failed to configure Ethernet using DHCP");
+    Serial.println(F("DHCP FAIL"));
     // Check for Ethernet hardware present
     if (Ethernet.hardwareStatus() == EthernetNoHardware) {
-      Serial.println("Ethernet shield was not found.  Sorry, can't run without hardware. :(");
+      Serial.println(F("Et FAIL"));
     } else if (Ethernet.linkStatus() == LinkOFF) {
-      Serial.println("Ethernet cable is not connected.");
+      Serial.println(F("CAB FAIL"));
     }
     link = false;
   }
@@ -319,14 +320,15 @@ void setup() {
   lcd2.clear();
   Wire.begin();
   RTC.begin();
-  if (! RTC.isrunning() || setRTC == 1) {
-    Serial.println("RTC is NOT running!");
+  if (! RTC.isrunning()) {
+    Serial.println(F("RTC START!"));
     //    following line sets the RTC to the date &amp; time this sketch was compiled
     RTC.adjust(DateTime(__DATE__, __TIME__));
   }
   pinMode (buzzer, OUTPUT);
   dht.begin();
   sendNTPpacket(timeServer);
+  getPhase();
 }
 
 void loop() {
@@ -338,8 +340,8 @@ void loop() {
     irrecv.resume(); // receive the next value
   }
   // Displays the value
-  draw_progressbar ();
-  if (Udp.parsePacket()) {
+  draw_progressbar();
+  if (link && Udp.parsePacket()) {
     parseUDP();
   }
   // Small waiting time
@@ -347,27 +349,36 @@ void loop() {
 
 }
 
-void printDigits(int digits)  //this void function is really useful; it adds a "0" to the beginning of the number, so that 5 minutes is displayed as "00:05:00", rather than "00:5 :00"
+void printDigits(int digits, LiquidCrystal lcd)  //this void function is really useful; it adds a "0" to the beginning of the number, so that 5 minutes is displayed as "00:05:00", rather than "00:5 :00"
 {
   if (digits < 10)
   {
-    lcd1.print("0");
-    lcd1.print(digits);
+    lcd.print("0");
+    lcd.print(digits);
   }
   else
   {
-    lcd1.print(digits);
+    lcd.print(digits);
   }
 }
 
 void lcdOutput(DateTime now)  //this is just used to display the timer on the LCD
 {
   lcd1.setCursor(0, 0);
-  printDigits(now.hour());
+  printDigits(now.hour(), lcd1);
   lcd1.print(":");
-  printDigits(now.minute());
+  printDigits(now.minute(), lcd1);
   lcd1.print(":");
-  printDigits(now.second());
+  printDigits(now.second(), lcd1);
+  lcd2.setCursor(0, 0);
+  printDigits(now.day(), lcd2);
+  lcd2.print("/");
+  printDigits(now.month(), lcd2);
+  lcd2.print("/");
+  printDigits(now.year()%100, lcd2);
+  lcd2.print(" ");
+  lcd2.print(daysOfTheWeek[now.dayOfTheWeek()]);
+  
   delay(100);
 }
 
@@ -403,8 +414,10 @@ void translateIR() // takes action based on IR code received
     //      case 0xFF5AA5: Serial.println(" 9");    break;
     case 0xFF42BD:
       buttonClick();
-      running = false;
-      send_to_google();
+      if(running) {
+        running = false;
+        send_to_google();
+      }
       break;
     //      case 0xFF4AB5: Serial.println(" 0");    break;
     //      case 0xFF52AD: Serial.println(" #");    break;
@@ -442,54 +455,55 @@ void sendNTPpacket(const char * address) {
 
 void parseUDP() {
   // We've received a packet, read the data from it
-    Udp.read(packetBuffer, NTP_PACKET_SIZE); // read the packet into the buffer
+  Udp.read(packetBuffer, NTP_PACKET_SIZE); // read the packet into the buffer
 
   // the timestamp starts at byte 40 of the received packet and is four bytes,
-    // or two words, long. First, extract the two words:
+  // or two words, long. First, extract the two words:
 
-    unsigned long highWord = word(packetBuffer[40], packetBuffer[41]);
-    unsigned long lowWord = word(packetBuffer[42], packetBuffer[43]);
-    // combine the four bytes (two words) into a long integer
-    // this is NTP time (seconds since Jan 1 1900):
-    unsigned long secsSince1900 = highWord << 16 | lowWord;
-//    Serial.print("Seconds since Jan 1 1900 = ");
-//    Serial.println(secsSince1900);
+  unsigned long highWord = word(packetBuffer[40], packetBuffer[41]);
+  unsigned long lowWord = word(packetBuffer[42], packetBuffer[43]);
+  // combine the four bytes (two words) into a long integer
+  // this is NTP time (seconds since Jan 1 1900):
+  unsigned long secsSince1900 = highWord << 16 | lowWord;
+  //    Serial.print("Seconds since Jan 1 1900 = ");
+  //    Serial.println(secsSince1900);
 
-    // now convert NTP time into everyday time:
-//    Serial.print("Unix time = ");
-    // Unix time starts on Jan 1 1970. In seconds, that's 2208988800:
-    const unsigned long seventyYears = 2208988800UL;
-    // subtract seventy years and add GMT5:30 offset
-    unsigned long epoch = (secsSince1900 - seventyYears)+19800L;
-    // print Unix time:
-    Serial.println(epoch);
-    RTC.adjust(DateTime(epoch));
+  // now convert NTP time into everyday time:
+  //    Serial.print("Unix time = ");
+  // Unix time starts on Jan 1 1970. In seconds, that's 2208988800:
+  const unsigned long seventyYears = 2208988800UL;
+  // subtract seventy years and add GMT5:30 offset
+  unsigned long epoch = (secsSince1900 - seventyYears) + 19800L;
+  // print Unix time:
+//  Serial.println(epoch);
+  RTC.adjust(DateTime(epoch));
+  getPhase();
 
-    // print the hour, minute and second:
-//    Serial.print("The UTC time is ");       // UTC is the time at Greenwich Meridian (GMT)
-//    Serial.print((epoch  % 86400L) / 3600); // print the hour (86400 equals secs per day)
-//    Serial.print(':');
-//    if (((epoch % 3600) / 60) < 10) {
-//      // In the first 10 minutes of each hour, we'll want a leading '0'
-//      Serial.print('0');
-//    }
-//    Serial.print((epoch  % 3600) / 60); // print the minute (3600 equals secs per minute)
-//    Serial.print(':');
-//    if ((epoch % 60) < 10) {
-//      // In the first 10 seconds of each minute, we'll want a leading '0'
-//      Serial.print('0');
-//    }
-//    Serial.println(epoch % 60); // print the second
-    // rtc.adjust(DateTime(2017, 7, 16, 16, 35, 20));
-    Ethernet.maintain();
+  // print the hour, minute and second:
+  //    Serial.print("The UTC time is ");       // UTC is the time at Greenwich Meridian (GMT)
+  //    Serial.print((epoch  % 86400L) / 3600); // print the hour (86400 equals secs per day)
+  //    Serial.print(':');
+  //    if (((epoch % 3600) / 60) < 10) {
+  //      // In the first 10 minutes of each hour, we'll want a leading '0'
+  //      Serial.print('0');
+  //    }
+  //    Serial.print((epoch  % 3600) / 60); // print the minute (3600 equals secs per minute)
+  //    Serial.print(':');
+  //    if ((epoch % 60) < 10) {
+  //      // In the first 10 seconds of each minute, we'll want a leading '0'
+  //      Serial.print('0');
+  //    }
+  //    Serial.println(epoch % 60); // print the second
+  Ethernet.maintain();
 }
 
 // https://create.arduino.cc/projecthub/embedotronics-technologies/attendance-system-based-on-arduino-and-google-spreadsheet-105621
+// https://github.com/Embedotronics/Attendance-System-with-storing-Data-on-Google-Spreadsheet-using-RFID-and-Arduino-Ethernet-Shield/blob/master/rfid_data_to_google_spreadsheet.ino
 // http://api.pushingbox.com/pushingbox?devid=v8DF280187E9B882&R_H=30&T_C=37&task_c=1
 
 void send_to_google() {
   if (client.connect(server, 80)) {
-    Serial.println("connected");
+    Serial.println(F("G CONN"));
     // Make a HTTP request:
     client.print("GET /pushingbox?devid=v8DF280187E9B882&R_H="); //YOUR URL
     client.print(h);
@@ -497,14 +511,70 @@ void send_to_google() {
     client.print(t);
     client.print("&task_c=");
     client.print('1');
+    client.print("&dur=");
+    client.print(now.unixtime() - then + TDELAY);
     client.print(" ");      //SPACE BEFORE HTTP/1.1
     client.print("HTTP/1.1");
     client.println();
     client.println("Host: api.pushingbox.com");
     client.println("Connection: close");
     client.println();
-   } else {
+  } else {
     // if you didn't get a connection to the server:
-    Serial.println("connection failed");
-   }
+    Serial.println(F("G FAIL"));
+  }
+}
+
+void getPhase() {  // calculate the current phase of the moon
+  now = RTC.now();
+  int Y = now.year();
+  int M = now.month(); 
+  int D = now.day();
+  double AG, IP;                      // based on the current date
+  byte phase;                         // algorithm adapted from Stephen R. Schmitt's
+                                      // Lunar Phase Computation program, originally
+  long YY, MM, K1, K2, K3, JD;        // written in the Zeno programming language
+                                      // http://home.att.net/~srschmitt/lunarphasecalc.html
+  // calculate julian date
+  YY = Y - floor((12 - M) / 10);
+  MM = M + 9;
+  if(MM >= 12)
+    MM = MM - 12;
+  
+  K1 = floor(365.25 * (YY + 4712));
+  K2 = floor(30.6 * MM + 0.5);
+  K3 = floor(floor((YY / 100) + 49) * 0.75) - 38;
+
+  JD = K1 + K2 + D + 59;
+/* Day 1 of the Gregorian calendar was Oct. 15, 1582, whose JD is
+  JD = 2299161,
+  so the JD of the last day of the Julian calendar was
+  JD = 2299160
+*/
+  if(JD > 2299160)
+    JD = JD -K3;
+/* 
+  magic Julian date 2451550.1.
+  It's 14:24 6 January 2000 and I suspect this is a day of a new moon cycle on the moment of algorithm development.
+*/
+  IP = normalize((JD - 2451550.1) / 29.530588853);
+  AG = (IP*29.53) + 0.23;
+  byte i = round(AG);
+  lcd2.setCursor(12, 0);
+  if(i < 16) {  // waxing cycle
+    lcd2.print("\76");
+    lcd2.print(tithi[i]);
+  } else {  // waning cycle
+    lcd2.print("\74");
+    lcd2.print(tithi[i-15]);
+  }
+  
+  
+}
+
+double normalize(double v) {           // normalize moon calculation between 0-1
+    v = v - floor(v);
+    if (v < 0)
+        v = v + 1;
+    return v;
 }
